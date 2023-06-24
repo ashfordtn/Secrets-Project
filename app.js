@@ -12,6 +12,7 @@ const app = express();
 
 app.set('view engine','ejs');
 app.use(bodyParser.urlencoded({extended: true}));
+app.use(express.static('public'));
 
 // Session configuration and passport initialization
 app.use(session({
@@ -23,13 +24,26 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 // DB Connection
-mongoose.connect('mongodb://localhost:27017/userDB');
+const connectDB = async () => {
+    try {
+        await mongoose.connect(process.env.DATABASE_URI, {
+            useNewUrlParser: true,
+            useUnifiedTopology: true
+        });
+    } catch (err) {
+        console.error(err);
+    }
+};
+
+connectDB();
+
 
 // User Schema and Passport plugin
 const userSchema = new mongoose.Schema({
     email: String,
     password: String,
-    googleId: String
+    googleId: String,
+    secret: String
 });
 userSchema.plugin(passportLocalMongoose);
 userSchema.plugin(findOrCreate);
@@ -64,7 +78,6 @@ passport.use(new GoogleStrategy({
     userProfileURL: 'https://www.googleapis.com/oauth2/v3/userinfo'
   },
   (accessToken, refreshToken, profile, cb) => {
-    console.log(profile);
     User.findOrCreate({ googleId: profile.id }, (err, user) => {
       return cb(err, user);
     });
@@ -94,12 +107,28 @@ app.get('/register', (req, res) => {
 });
 
 app.get('/secrets', (req,res) => {
-    if ( req.isAuthenticated() ) {
-        res.render('secrets');
-    } else {
-        res.redirect('/login');
-    };
+    User.find({"secret":{$ne: null}}, (err, foundUsers) => {
+        if (err) {
+            console.log(err);
+        } else {
+            if ( foundUsers) {
+                res.render('secrets', {usersWithSecrets: foundUsers})
+            };
+        };
+    });
 });
+
+// if ( req.isAuthenticated() ) {
+//     User.findById(req.user.id, (err, foundUser) => {
+//         if (!err) {
+//             res.render('secrets',{secret: foundUser.secret});
+//         } else {
+//             console.log(err);
+//         };
+//     });
+// } else {
+//     res.redirect('/login');
+// };
 
 app.get('/logout', (req,res) => {
     req.logout((err)=>{
@@ -107,6 +136,14 @@ app.get('/logout', (req,res) => {
             res.redirect('/');
         };
     });
+});
+
+app.get('/submit', (req,res) => {
+    if ( req.isAuthenticated() ) {
+        res.render('submit');
+    } else {
+        res.redirect('/login');
+    }
 });
 
 app.post('/register',(req,res) => {
@@ -138,7 +175,27 @@ app.post('/login', (req,res) => {
     });
 });
 
-// Starting Server 
-app.listen(3000, () => {
-    console.log('Server started on port 3000');
+app.post('/submit',(req,res) => {
+    const submittedSecret = req.body.secret;
+    User.findById(req.user.id, (err, foundUser) => {
+        if ( err ) {
+            console.log(err)
+        } else {
+            if ( foundUser ) {
+                foundUser.secret = submittedSecret;
+                foundUser.save(()=>{
+                    res.redirect('/secrets');
+                });
+            };
+        };
+    } );
 });
+
+mongoose.connection.once('open', () => {
+    console.log('Connected to DB');
+    // Starting Server 
+    app.listen(3000, () => {
+        console.log('Server started on port 3000');
+    });
+
+})
